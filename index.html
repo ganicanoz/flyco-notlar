@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>FLYCOBOT</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center;
+    background: #f4f7fb; color: #172033;
+    font: 16px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  form {
+    width: min(420px, calc(100% - 32px));
+    background: #fff; border: 1px solid #d7e0ea; border-radius: 16px;
+    box-shadow: 0 8px 24px rgba(23, 32, 51, .06);
+    padding: 28px;
+  }
+  .brand { display: flex; gap: 14px; align-items: center; margin-bottom: 18px; }
+  img { width: 48px; height: 48px; border-radius: 22%; }
+  h1 { margin: 0; font-size: 20px; letter-spacing: 0; }
+  p { margin: 2px 0 0; color: #5c6b80; font-size: 14px; }
+  label { display: block; margin: 18px 0 8px; font-weight: 650; }
+  input {
+    width: 100%; border: 1px solid #d7e0ea; border-radius: 10px;
+    padding: 12px 14px; font: inherit; color: inherit; background: #fff;
+  }
+  button {
+    margin-top: 16px; width: 100%; border: 0; border-radius: 10px;
+    background: #1258D8; color: #fff; font: inherit; font-weight: 650;
+    padding: 12px 14px; cursor: pointer;
+  }
+  button:disabled { opacity: .7; cursor: wait; }
+  .err { min-height: 1.4em; margin: 12px 0 0; color: #9a3b32; font-size: 14px; }
+</style>
+</head>
+<body>
+<form id="gate">
+  <div class="brand">
+    <img src="img/flycobot-icon.png" alt="">
+    <div>
+      <h1>FLYCOBOT</h1>
+      <p>Not defteri kilitli</p>
+    </div>
+  </div>
+  <label for="pass">Şifre</label>
+  <input id="pass" type="password" autocomplete="current-password" required>
+  <button id="open" type="submit">Aç</button>
+  <p class="err" id="err" role="status"></p>
+</form>
+<script>
+const form = document.getElementById("gate");
+const err = document.getElementById("err");
+const button = document.getElementById("open");
+
+function mime(path) {
+  const ext = path.split(".").pop().toLowerCase();
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "png") return "image/png";
+  if (ext === "webp") return "image/webp";
+  if (ext === "gif") return "image/gif";
+  return "application/octet-stream";
+}
+
+function unpack(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let offset = 0;
+  const htmlLen = view.getUint32(offset); offset += 4;
+  const htmlBytes = bytes.subarray(offset, offset + htmlLen); offset += htmlLen;
+  let html = new TextDecoder().decode(htmlBytes);
+  const count = view.getUint32(offset); offset += 4;
+  const files = [];
+  for (let i = 0; i < count; i++) {
+    const nameLen = view.getUint16(offset); offset += 2;
+    const name = new TextDecoder().decode(bytes.subarray(offset, offset + nameLen)); offset += nameLen;
+    const dataLen = view.getUint32(offset); offset += 4;
+    const data = bytes.subarray(offset, offset + dataLen); offset += dataLen;
+    const blob = new Blob([data], { type: mime(name) });
+    files.push([name, URL.createObjectURL(blob)]);
+  }
+  files.sort((a, b) => b[0].length - a[0].length);
+  for (const [name, url] of files) html = html.split(name).join(url);
+  return html;
+}
+
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  err.textContent = "";
+  button.disabled = true;
+  button.textContent = "Açılıyor";
+  const password = document.getElementById("pass").value;
+  try {
+    const response = await fetch("notes.bin", { cache: "no-store" });
+    if (!response.ok) throw new Error("Dosya açılmadı");
+    const packed = new Uint8Array(await response.arrayBuffer());
+    if (new TextDecoder().decode(packed.subarray(0, 4)) !== "FCB1") throw new Error("Dosya bozuk");
+    const view = new DataView(packed.buffer, packed.byteOffset, packed.byteLength);
+    const iterations = view.getUint32(4);
+    const salt = packed.subarray(8, 24);
+    const iv = packed.subarray(24, 36);
+    const ciphertext = packed.subarray(36);
+    const baseKey = await crypto.subtle.importKey(
+      "raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveKey"]
+    );
+    const key = await crypto.subtle.deriveKey(
+      { name: "PBKDF2", salt, iterations, hash: "SHA-256" },
+      baseKey,
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["decrypt"]
+    );
+    const plain = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext));
+    const html = unpack(plain);
+    document.open();
+    document.write(html);
+    document.close();
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = "Aç";
+    err.textContent = error && error.name === "OperationError" ? "Şifre yanlış." : "Notlar açılamadı.";
+  }
+});
+</script>
+</body>
+</html>
