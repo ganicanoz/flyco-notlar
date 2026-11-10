@@ -28,6 +28,7 @@
   input {
     width: 100%; border: 1px solid #d7e0ea; border-radius: 10px;
     padding: 12px 14px; font: inherit; color: inherit; background: #fff;
+    -webkit-text-security: disc;
   }
   button {
     margin-top: 16px; width: 100%; border: 0; border-radius: 10px;
@@ -48,11 +49,16 @@
     </div>
   </div>
   <label for="pass">Şifre</label>
-  <input id="pass" type="password" autocomplete="current-password" required>
+  <input id="pass" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" enterkeyhint="go" required>
   <button id="open" type="submit">Aç</button>
   <p class="err" id="err" role="status"></p>
 </form>
 <script>
+const pass = document.getElementById("pass");
+pass.addEventListener("input", () => {
+  const digits = pass.value.replace(/\D/g, "");
+  if (pass.value !== digits) pass.value = digits;
+});
 const form = document.getElementById("gate");
 const err = document.getElementById("err");
 const button = document.getElementById("open");
