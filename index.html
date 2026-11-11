@@ -45,12 +45,14 @@
     <img src="img/flycobot-icon.png" alt="">
     <div>
       <h1>FLYCOBOT</h1>
-      <p>Not defteri kilitli</p>
+      <p id="lockline">Not defteri kilitli</p>
     </div>
   </div>
-  <label for="pass">Şifre</label>
-  <input id="pass" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" enterkeyhint="go" required>
-  <button id="open" type="submit">Aç</button>
+  <div id="ask">
+    <label for="pass">Şifre</label>
+    <input id="pass" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" enterkeyhint="go" required>
+    <button id="open" type="submit">Aç</button>
+  </div>
   <p class="err" id="err" role="status"></p>
 </form>
 <script>
@@ -93,43 +95,76 @@ function unpack(bytes) {
   return html;
 }
 
+const sessionKey = "flycobot-open";
+function readSession() {
+  try { return sessionStorage.getItem(sessionKey) || ""; } catch (e) { return ""; }
+}
+function writeSession(value) {
+  try { sessionStorage.setItem(sessionKey, value); } catch (e) {}
+}
+function clearSession() {
+  try { sessionStorage.removeItem(sessionKey); } catch (e) {}
+}
+
+function showLock() {
+  document.getElementById("lockline").textContent = "Not defteri kilitli";
+  document.getElementById("ask").hidden = false;
+  button.disabled = false;
+  button.textContent = "Aç";
+}
+
+async function openNotes(password) {
+  const response = await fetch("notes.bin?v=" + Date.now(), { cache: "no-store" });
+  if (!response.ok) throw new Error("Dosya açılmadı");
+  const packed = new Uint8Array(await response.arrayBuffer());
+  if (new TextDecoder().decode(packed.subarray(0, 4)) !== "FCB1") throw new Error("Dosya bozuk");
+  const view = new DataView(packed.buffer, packed.byteOffset, packed.byteLength);
+  const iterations = view.getUint32(4);
+  const salt = packed.subarray(8, 24);
+  const iv = packed.subarray(24, 36);
+  const ciphertext = packed.subarray(36);
+  const baseKey = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveKey"]
+  );
+  const key = await crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt, iterations, hash: "SHA-256" },
+    baseKey,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["decrypt"]
+  );
+  const plain = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext));
+  writeSession(password);
+  const html = unpack(plain);
+  document.open();
+  document.write(html);
+  document.close();
+}
+
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   err.textContent = "";
   button.disabled = true;
   button.textContent = "Açılıyor";
-  const password = document.getElementById("pass").value;
   try {
-    const response = await fetch("notes.bin", { cache: "no-store" });
-    if (!response.ok) throw new Error("Dosya açılmadı");
-    const packed = new Uint8Array(await response.arrayBuffer());
-    if (new TextDecoder().decode(packed.subarray(0, 4)) !== "FCB1") throw new Error("Dosya bozuk");
-    const view = new DataView(packed.buffer, packed.byteOffset, packed.byteLength);
-    const iterations = view.getUint32(4);
-    const salt = packed.subarray(8, 24);
-    const iv = packed.subarray(24, 36);
-    const ciphertext = packed.subarray(36);
-    const baseKey = await crypto.subtle.importKey(
-      "raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveKey"]
-    );
-    const key = await crypto.subtle.deriveKey(
-      { name: "PBKDF2", salt, iterations, hash: "SHA-256" },
-      baseKey,
-      { name: "AES-GCM", length: 256 },
-      false,
-      ["decrypt"]
-    );
-    const plain = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext));
-    const html = unpack(plain);
-    document.open();
-    document.write(html);
-    document.close();
+    await openNotes(pass.value);
   } catch (error) {
-    button.disabled = false;
-    button.textContent = "Aç";
+    clearSession();
+    showLock();
     err.textContent = error && error.name === "OperationError" ? "Şifre yanlış." : "Notlar açılamadı.";
   }
 });
+
+const saved = readSession();
+if (saved) {
+  document.getElementById("lockline").textContent = "Güncel notlar açılıyor";
+  document.getElementById("ask").hidden = true;
+  openNotes(saved).catch(() => {
+    clearSession();
+    err.textContent = "Notlar açılamadı.";
+    showLock();
+  });
+}
 </script>
 </body>
 </html>
